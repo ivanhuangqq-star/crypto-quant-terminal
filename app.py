@@ -26,7 +26,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 50 大資產清單
+# 50 大資產清單 (自動適應 Yahoo Finance 格式)
 CRYPTO_LIST = [
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "DOTUSDT", "AVAXUSDT", "LINKUSDT",
     "SHIBUSDT", "TONUSDT", "SUIUSDT", "NEARUSDT", "APTUSDT", "FETUSDT", "OPUSDT", "ARBUSDT", "WIFUSDT", "PEPEUSDT",
@@ -36,61 +36,70 @@ CRYPTO_LIST = [
 ]
 TOP_10_LIST = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "DOTUSDT", "AVAXUSDT", "LINKUSDT"]
 
-# ⚡ ⚡ 核心升級：全球多端點自動容錯流機制
-def fetch_from_endpoints(api_path):
-    # 輪詢幣安現貨、合約全球頂級鏡像域名，防止單一地區歐美IP封鎖
-    endpoints = [
-        "https://fapi.binance.com",
-        "https://api.binance.com",
-        "https://fapi.binance.me",
-        "https://api1.binance.com",
-        "https://api2.binance.com"
-    ]
-    for base_url in endpoints:
-        try:
-            # 依據端點類型自動切換對應接口路徑
-            if "fapi" in base_url and "api/" in api_path:
-                adjusted_path = api_path.replace("api/v3", "fapi/v1")
-            elif "fapi" not in base_url and "fapi/" in api_path:
-                adjusted_path = api_path.replace("fapi/v1", "api/v3")
-            else:
-                adjusted_path = api_path
-                
-            url = f"{base_url}{adjusted_path}"
-            res = requests.get(url, timeout=3.5)
-            if res.status_code == 200:
-                data = res.json()
-                if data and (isinstance(data, list) and len(data) > 0 or isinstance(data, dict)):
-                    return data
-        except:
-            continue
-    return None
-
+# ⚡ ⚡ ⚡ 核心重構：Yahoo Finance 數據源轉換引擎，解決雲端封鎖問題
 def get_crypto_data(symbol, interval):
-    res = fetch_from_endpoints(f"/fapi/v1/klines?symbol={symbol}&interval={interval}&limit=150")
-    if res is None:
-        return None
     try:
-        df = pd.DataFrame(res, columns=['Open_time', 'Open', 'High', 'Low', 'Close', 'Volume', 'C_time', 'Q_vol', 'Trades', 'T_base', 'T_quote', 'Ignore'])
-        df['Open_time'] = pd.to_datetime(df['Open_time'], unit='ms') + pd.Timedelta(hours=8)
-        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
-            df[col] = df[col].astype(float)
+        # 將 Binance 格式轉為 Yahoo 格式 (如 BTCUSDT -> BTC-USD)
+        yahoo_symbol = symbol.replace("USDT", "-USD")
+        if symbol == "SHIBUSDT": yahoo_symbol = "SHIB-USD"
+        
+        # 映射時間顆粒度
+        tf_map = {"15m": "15m", "1h": "60m", "4h": "1h", "1d": "1d"}
+        yf_interval = tf_map.get(interval, "1d")
+        
+        # 設定抓取範圍
+        period = "5d" if yf_interval in ["15m", "60m", "1h"] else "60d"
+        
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}?range={period}&interval={yf_interval}"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        
+        res = requests.get(url, headers=headers, timeout=5).json()
+        result = res['chart']['result'][0]
+        
+        timestamps = result['timestamp']
+        indicators = result['indicators']['quote'][0]
+        
+        df = pd.DataFrame({
+            'Open_time': pd.to_datetime(timestamps, unit='s') + pd.Timedelta(hours=8),
+            'Open': indicators['open'],
+            'High': indicators['high'],
+            'Low': indicators['low'],
+            'Close': indicators['close'],
+            'Volume': indicators['volume']
+        })
+        # 清除不完整數據
+        df = df.dropna().reset_index(drop=True)
         return df
     except:
         return None
 
 def get_all_tickers():
-    res = fetch_from_endpoints("/fapi/v1/ticker/24hr")
-    if res is None:
-        return {}
-    try:
-        return {item['symbol']: item for item in res if 'symbol' in item and item['symbol'] in TOP_10_LIST}
-    except:
-        return {}
+    # 透過多線程平行抓取前 10 大標的的即時報價與漲跌幅
+    def fetch_single_ticker(symbol):
+        try:
+            yahoo_symbol = symbol.replace("USDT", "-USD")
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}?range=2d&interval=1d"
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            res = requests.get(url, headers=headers, timeout=3).json()
+            meta = res['chart']['result'][0]['meta']
+            c_price = meta['regularMarketPrice']
+            p_close = meta['chartPreviousClose']
+            c_change = ((c_price - p_close) / p_close) * 100
+            return symbol, {'lastPrice': c_price, 'priceChangePercent': c_change}
+        except:
+            return symbol, None
+
+    ticker_dict = {}
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        results = executor.map(fetch_single_ticker, TOP_10_LIST)
+        for symbol, data in results:
+            if data:
+                ticker_dict[symbol] = data
+    return ticker_dict
 
 # 純 Pandas 矩陣技術指標演算法
 def calculate_indicators(df):
-    if df is None or len(df) < 30:
+    if df is None or len(df) < 20:
         return df
     df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
     ma20 = df['Close'].rolling(window=20).mean()
@@ -115,7 +124,7 @@ def calculate_indicators(df):
     return df
 
 def compute_bi_directional_score(df):
-    if df is None or len(df) < 50:
+    if df is None or len(df) < 20:
         return 50, 50, 0.0
     try:
         df = calculate_indicators(df)
@@ -162,13 +171,13 @@ def compute_coin_bi_radar(symbol):
 @st.cache_data(ttl=60)
 def scan_full_market_bi_directional():
     results = []
-    with ThreadPoolExecutor(max_workers=15) as executor:
+    with ThreadPoolExecutor(max_workers=10) as executor:
         futures = [executor.submit(compute_coin_bi_radar, coin) for coin in CRYPTO_LIST]
         for f in futures:
             results.append(f.result())
     return results
 
-# 控制面板
+# 控制面板 (側邊欄)
 st.sidebar.markdown("<h2 style='font-size:1.4rem; margin-top:0px; margin-bottom:20px;'>📊 量化控制中心</h2>", unsafe_allow_html=True)
 symbol = st.sidebar.selectbox("分析核心標的", CRYPTO_LIST)
 interval = st.sidebar.selectbox("時間顆粒度", ["15m", "1h", "4h", "1d"])
@@ -180,7 +189,7 @@ long_score, short_score, atr_value = compute_bi_directional_score(df)
 try:
     if all_tickers and symbol in all_tickers: 
         current_price = float(all_tickers[symbol]['lastPrice'])
-    elif df is not None:
+    elif df is not None and len(df) > 0:
         current_price = float(df['Close'].iloc[-1])
     else:
         current_price = 0.0
@@ -222,7 +231,7 @@ if all_tickers:
 tab_main, tab_radar, tab_macro = st.tabs(["📈 實時獨立大腦 (本地量化圖表引擎)", "📡 全時區雙向雷達 (50大代幣掃描)", "📰 宏觀事件牆 (加密新聞 & 財經日曆)"])
 
 with tab_main:
-    if df is not None and len(df) >= 50 and current_price > 0:
+    if df is not None and len(df) >= 20 and current_price > 0:
         df = calculate_indicators(df)
         rsi = df['RSI'].iloc[-1]
         macd_line = df['MACD'].iloc[-1]
@@ -252,7 +261,7 @@ with tab_main:
         fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(20, 26, 38, 0.4)", height=600, margin=dict(l=10, r=10, t=10, b=10), xaxis_rangeslider_visible=False, hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     else:
-        st.error("❌ 交易所數據或K線資料不足。系統正在嘗試全球備援域名對接，請稍候刷新...")
+        st.error("❌ 全球替代資料源加載中，請稍候刷新...")
 
 with tab_radar:
     st.markdown("### 📡 智能跨週期雙向雷達 (多頭共振 / 空頭派發全方位掃描)")
