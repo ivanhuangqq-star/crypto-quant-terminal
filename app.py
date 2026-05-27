@@ -99,8 +99,12 @@ def calculate_indicators(df):
     low_cp = (df['Low'] - df['Close'].shift()).abs()
     tr = pd.concat([high_low, high_cp, low_cp], axis=1).max(axis=1)
     df['ATR'] = tr.rolling(window=14).mean()
+    
+    # ⚡ 籌碼與成交量前置矩陣計算
+    df['Vol_MA5'] = df['Volume'].shift(1).rolling(window=5).mean()
     return df
 
+# ⚡ 🛡️ 核心重構：融入量價共振與籌碼防線的雙向綜合算分大腦
 def compute_bi_directional_score(df):
     if df is None or len(df) < 50:
         return 50, 50, 0.0
@@ -111,24 +115,50 @@ def compute_bi_directional_score(df):
         current_price = latest['Close']
         atr_val = latest['ATR'] if not pd.isna(latest['ATR']) else 0.0
         
+        # 本地動態籌碼分佈計算 (POC)
+        price_min, price_max = df['Low'].min(), df['High'].max()
+        bins = np.linspace(price_min, price_max, 25)
+        vol_counts, bin_edges = np.histogram(df['Close'], bins=bins, weights=df['Volume'])
+        poc_price = (bin_edges[np.argmax(vol_counts)] + bin_edges[np.argmax(vol_counts)+1]) / 2 if len(vol_counts) > 0 else current_price
+
+        # --- 🟢 多頭分數計算 (Long Score) ---
         ls = 0
-        if latest['RSI'] < 35 and latest['RSI'] > prev['RSI']: ls += 30
-        elif 35 <= latest['RSI'] <= 60 and latest['RSI'] > prev['RSI']: ls += 20
-        if latest['MACD'] > latest['MACDs'] and latest['MACDh'] > prev['MACDh']: ls += 30
+        # 1. RSI 情緒因子 (20分)
+        if latest['RSI'] < 35 and latest['RSI'] > prev['RSI']: ls += 20
+        elif 35 <= latest['RSI'] <= 60 and latest['RSI'] > prev['RSI']: ls += 10
+        # 2. MACD 動能因子 (20分)
+        if latest['MACD'] > latest['MACDs'] and latest['MACDh'] > prev['MACDh']: ls += 20
+        # 3. 布林通道支撐因子 (15分)
         b_range = latest['BBU'] - latest['BBL']
         if b_range > 0:
             pos = (current_price - latest['BBL']) / b_range
-            if pos < 0.25 and latest['RSI'] > prev['RSI']: ls += 20
-        if current_price > latest['EMA20'] and prev['Close'] > prev['EMA20']: ls += 20
+            if pos < 0.25 and latest['RSI'] > prev['RSI']: ls += 15
+        # 4. EMA20 趨勢生命線 (15分)
+        if current_price > latest['EMA20'] and prev['Close'] > prev['EMA20']: ls += 15
         
+        # ⚡ 5. 籌碼控制線 (POC) 因子 (15分)
+        if current_price >= poc_price * 0.995 and current_price <= poc_price * 1.03: ls += 15
+        # ⚡ 6. 量能爆發因子 (15分)
+        if latest['Volume'] > latest['Vol_MA5'] * 1.5 and latest['Close'] > latest['Open']: ls += 15
+        
+        # --- 🔴 空頭分數計算 (Short Score) ---
         ss = 0
-        if latest['RSI'] > 65 and latest['RSI'] < prev['RSI']: ss += 30
-        elif 40 <= latest['RSI'] <= 65 and latest['RSI'] < prev['RSI']: ss += 20
-        if latest['MACD'] < latest['MACDs'] and latest['MACDh'] < prev['MACDh']: ss += 30
+        # 1. RSI 情緒因子 (20分)
+        if latest['RSI'] > 65 and latest['RSI'] < prev['RSI']: ss += 20
+        elif 40 <= latest['RSI'] <= 65 and latest['RSI'] < prev['RSI']: ss += 10
+        # 2. MACD 動能因子 (20分)
+        if latest['MACD'] < latest['MACDs'] and latest['MACDh'] < prev['MACDh']: ss += 20
+        # 3. 布林通道壓制因子 (15分)
         if b_range > 0:
             pos = (current_price - latest['BBL']) / b_range
-            if pos > 0.75 and latest['RSI'] < prev['RSI']: ss += 20
-        if current_price < latest['EMA20'] and prev['Close'] < prev['EMA20']: ss += 20
+            if pos > 0.75 and latest['RSI'] < prev['RSI']: ss += 15
+        # 4. EMA20 趨勢生命線 (15分)
+        if current_price < latest['EMA20'] and prev['Close'] < prev['EMA20']: ss += 15
+        
+        # ⚡ 5. 籌碼控制線 (POC) 因子 (15分)
+        if current_price <= poc_price * 1.005 and current_price >= poc_price * 0.97: ss += 15
+        # ⚡ 6. 量能爆發因子 (15分)
+        if latest['Volume'] > latest['Vol_MA5'] * 1.5 and latest['Close'] < latest['Open']: ss += 15
         
         return ls, ss, atr_val
     except:
@@ -156,7 +186,7 @@ def scan_full_market_bi_directional():
             results.append(f.result())
     return results
 
-# 控制面板 (側邊欄)
+# 控制面板
 st.sidebar.markdown("<h2 style='font-size:1.4rem; margin-top:0px; margin-bottom:20px;'>📊 量化控制中心</h2>", unsafe_allow_html=True)
 symbol = st.sidebar.selectbox("分析核心標的", CRYPTO_LIST)
 interval = st.sidebar.selectbox("時間顆粒度", ["15m", "1h", "4h", "1d"])
@@ -221,13 +251,12 @@ with tab_main:
         c3.metric("MACD 動能柱", f"{(macd_line-macd_signal):.4f}")
         c4.metric("EMA20 趨勢生命線", f"${ema20:,.4f}")
         
-        if long_score >= 75: st.success(f"🎯 **【多頭核心共振：{long_score} 分】** 建議：強烈建議佈局多單。2倍 ATR 波動防護軌道已同步啟動。")
-        elif short_score >= 75: st.error(f"⚠️ **【空頭核心派發：{short_score} 分】** 建議：嚴禁建倉多單。建議依風控軌道佈局空單。")
-        else: st.info(f"⏳ **【市場多空拉鋸】 多頭：{long_score}分 | 空頭：{short_score}分** 建議：多空動能不顯著，建議保持觀望。")
+        if long_score >= 75: st.success(f"🎯 **【多頭量價完美共振：{long_score} 分】** 建議：強烈建議佈局多單。有大資金主力掃盤，且踩穩籌碼支撐線。")
+        elif short_score >= 75: st.error(f"⚠️ **【空頭放量派發：{short_score} 分】** 建議：嚴禁建倉多單。主力放量砸盤跌破籌碼峰，建議佈局空單。")
+        else: st.info(f"⏳ **【市場多空拉鋸】 多頭因子：{long_score}分 | 空頭因子：{short_score}分** 建議：多空動能不明顯，籌碼區內縮量盤整，建議保持觀望。")
         
         st.markdown(f"### 📈 {symbol} 獨立量價特製終端 (含籌碼分佈 Profile)")
         
-        # ⚡ ⚡ ⚡ 升級為三子圖架構：主 K 線（60%）、交易量副圖（20%）、RSI副圖（20%）
         fig = make_subplots(
             rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, 
             row_width=[0.20, 0.20, 0.60]
@@ -247,52 +276,40 @@ with tab_main:
         fig.add_trace(go.Scatter(x=df['Open_time'], y=df['BBU'], line=dict(color='rgba(0, 188, 255, 0.3)', width=1, dash='dash'), name="布林上軌", yhoverformat=",.1f"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df['Open_time'], y=df['BBL'], line=dict(color='rgba(0, 188, 255, 0.3)', width=1, dash='dash'), name="布林下軌", yhoverformat=",.1f"), row=1, col=1)
         
-        # ⚡ 3. 核心算法：動態繪製左側橫向籌碼峰 (Volume Profile)
+        # 3. 動態繪製左側橫向籌碼峰 (Volume Profile)
         price_min, price_max = df['Low'].min(), df['High'].max()
-        bins = np.linspace(price_min, price_max, 25) # 將價格空間切為 24 個橫向區間
-        
-        # 計算每個區間對應的成交量總和
+        bins = np.linspace(price_min, price_max, 25)
         vol_counts, bin_edges = np.histogram(df['Close'], bins=bins, weights=df['Volume'])
         max_vol = max(vol_counts) if len(vol_counts) > 0 else 1
         
-        # 找出籌碼峰最大控制線 (POC)
         poc_idx = np.argmax(vol_counts)
         poc_price = (bin_edges[poc_idx] + bin_edges[poc_idx+1]) / 2
         
-        # 在主圖橫向繪製籌碼條
         for i in range(len(vol_counts)):
             bin_y = (bin_edges[i] + bin_edges[i+1]) / 2
-            bar_width = (vol_counts[i] / max_vol) * (len(df) * 0.15) # 橫向長度最多佔圖表左側 15%
-            
-            # 使用 K 線時間軸起點向右延伸出橫向矩陣條
+            bar_width = (vol_counts[i] / max_vol) * (len(df) * 0.15)
             start_x = df['Open_time'].iloc[0]
             end_x = df['Open_time'].iloc[int(bar_width)] if int(bar_width) > 0 else start_x
             
             color = "rgba(0, 255, 204, 0.15)" if bin_y >= df['EMA20'].iloc[-1] else "rgba(255, 74, 90, 0.15)"
-            if i == poc_idx: color = "rgba(255, 204, 0, 0.4)" # POC 主力成本區加亮
+            if i == poc_idx: color = "rgba(255, 204, 0, 0.4)"
             
             fig.add_shape(
                 type="rect", x0=start_x, y0=bin_edges[i], x1=end_x, y1=bin_edges[i+1],
                 fillcolor=color, line_width=0, row=1, col=1
             )
             
-        # 標註 POC 機構防線
         fig.add_hline(y=poc_price, line_dash="solid", line_color="rgba(255, 204, 0, 0.6)", line_width=1.5, annotation_text=f"POC成本區: {poc_price:,.1f}", row=1, col=1)
         
-        # ⚡ 4. 繪製副圖一：縱向交易量柱狀圖 (Volume Bars)
+        # 4. 繪製副圖一：交易量柱狀圖
         colors_vol = [ '#00ffcc' if df['Close'].iloc[i] >= df['Open'].iloc[i] else '#ff4a5a' for i in range(len(df)) ]
-        fig.add_trace(go.Bar(
-            x=df['Open_time'], y=df['Volume'], 
-            marker_color=colors_vol, name="交易量", 
-            yhoverformat=",.0f"
-        ), row=2, col=1)
+        fig.add_trace(go.Bar(x=df['Open_time'], y=df['Volume'], marker_color=colors_vol, name="交易量", yhoverformat=",.0f"), row=2, col=1)
         
         # 5. 繪製副圖二：RSI
         fig.add_trace(go.Scatter(x=df['Open_time'], y=df['RSI'], line=dict(color='#00bcff', width=1.5), name="RSI", yhoverformat=".2f"), row=3, col=1)
         fig.add_hline(y=70, line_dash="dash", line_color="rgba(255, 74, 90, 0.4)", row=3, col=1)
         fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.4)", row=3, col=1)
         
-        # 控制全局排版與 Hover
         fig.update_layout(
             template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(20, 26, 38, 0.4)", 
             height=700, margin=dict(l=10, r=10, t=10, b=10), xaxis_rangeslider_visible=False, 
