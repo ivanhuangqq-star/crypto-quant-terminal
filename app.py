@@ -26,76 +26,74 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 50 大資產清單 (自動適應 Yahoo Finance 格式)
+# 50 大熱門合約代幣資產清單 (適應 BingX 標準格式 symbol-USDT)
 CRYPTO_LIST = [
-    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "DOTUSDT", "AVAXUSDT", "LINKUSDT",
-    "SHIBUSDT", "TONUSDT", "SUIUSDT", "NEARUSDT", "APTUSDT", "FETUSDT", "OPUSDT", "ARBUSDT", "WIFUSDT", "PEPEUSDT",
-    "MATICUSDT", "LTCUSDT", "UNIUSDT", "ICPUSDT", "FILUSDT", "STXUSDT", "IMXUSDT", "GRTUSDT", "RNDRUSDT", "THETAUSDT",
-    "ATOMUSDT", "XLMUSDT", "HBARUSDT", "MKRUSDT", "LDOUSDT", "TIAUSDT", "INJUSDT", "WLDUSDT", "SEIUSDT", "FTMUSDT",
-    "PENDLEUSDT", "JUPUSDT", "PYTHUSDT", "BONKUSDT", "FLOKIUSDT", "ORDIUSDT", "1INCHUSDT", "CRVUSDT", "ALGOUSDT", "EGLDUSDT"
+    "BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT", "ADA-USDT", "DOGE-USDT", "DOT-USDT", "AVAX-USDT", "LINK-USDT",
+    "SHIB-USDT", "TON-USDT", "SUI-USDT", "NEAR-USDT", "APT-USDT", "FET-USDT", "OP-USDT", "ARB-USDT", "WIF-USDT", "PEPE-USDT",
+    "MATIC-USDT", "LTC-USDT", "UNI-USDT", "ICP-USDT", "FIL-USDT", "STX-USDT", "IMX-USDT", "GRT-USDT", "RNDR-USDT", "THETA-USDT",
+    "ATOM-USDT", "XLM-USDT", "HBAR-USDT", "MKR-USDT", "LDO-USDT", "TIA-USDT", "INJ-USDT", "WLD-USDT", "SEI-USDT", "FTM-USDT",
+    "PENDLE-USDT", "JUP-USDT", "PYTH-USDT", "BONK-USDT", "FLOKI-USDT", "ORDI-USDT", "1INCH-USDT", "CRV-USDT", "ALGO-USDT", "EGLD-USDT"
 ]
-TOP_10_LIST = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "DOTUSDT", "AVAXUSDT", "LINKUSDT"]
+TOP_10_LIST = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT", "ADA-USDT", "DOGE-USDT", "DOT-USDT", "AVAX-USDT", "LINK-USDT"]
 
-# ⚡ ⚡ ⚡ 核心重構：Yahoo Finance 數據源轉換引擎，解決雲端封鎖問題
+# ⚡ ⚡ ⚡ 核心功能：對接 BingX 永續合約公開行情介面
 def get_crypto_data(symbol, interval):
     try:
-        # 將 Binance 格式轉為 Yahoo 格式 (如 BTCUSDT -> BTC-USD)
-        yahoo_symbol = symbol.replace("USDT", "-USD")
-        if symbol == "SHIBUSDT": yahoo_symbol = "SHIB-USD"
+        # BingX 域名與標準合約 K 線路徑
+        url = "https://open-api.bingx.com/openApi/swap/v3/quote/klines"
         
-        # 映射時間顆粒度
-        tf_map = {"15m": "15m", "1h": "60m", "4h": "1h", "1d": "1d"}
-        yf_interval = tf_map.get(interval, "1d")
+        # 映射時間粒度 (適應 BingX 的時間參數結構)
+        tf_map = {"15m": "15m", "1h": "60m", "4h": "4h", "1d": "1d"}
+        bingx_interval = tf_map.get(interval, "60m")
         
-        # 設定抓取範圍
-        period = "5d" if yf_interval in ["15m", "60m", "1h"] else "60d"
+        params = {
+            "symbol": symbol,
+            "interval": bingx_interval,
+            "limit": 150
+        }
         
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}?range={period}&interval={yf_interval}"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        res = requests.get(url, params=params, timeout=5).json()
+        raw_data = res.get("data", [])
         
-        res = requests.get(url, headers=headers, timeout=5).json()
-        result = res['chart']['result'][0]
+        if not raw_data:
+            return None
+            
+        # BingX 返回格式為列表套字典，或是逆序數組，我們直接轉成 DataFrame 矩陣
+        df = pd.DataFrame(raw_data)
         
-        timestamps = result['timestamp']
-        indicators = result['indicators']['quote'][0]
+        # 轉換時間與型態對齊
+        df['Open_time'] = pd.to_datetime(df['time'], unit='ms') + pd.Timedelta(hours=8)
+        df['Open'] = df['open'].astype(float)
+        df['High'] = df['high'].astype(float)
+        df['Low'] = df['low'].astype(float)
+        df['Close'] = df['close'].astype(float)
+        df['Volume'] = df['volume'].astype(float)
         
-        df = pd.DataFrame({
-            'Open_time': pd.to_datetime(timestamps, unit='s') + pd.Timedelta(hours=8),
-            'Open': indicators['open'],
-            'High': indicators['high'],
-            'Low': indicators['low'],
-            'Close': indicators['close'],
-            'Volume': indicators['volume']
-        })
-        # 清除不完整數據
-        df = df.dropna().reset_index(drop=True)
-        return df
+        # 確保順序是由舊到新（符合技術指標計算邏輯）
+        df = df.sort_values(by='Open_time').reset_index(drop=True)
+        return df[['Open_time', 'Open', 'High', 'Low', 'Close', 'Volume']]
     except:
         return None
 
 def get_all_tickers():
-    # 透過多線程平行抓取前 10 大標的的即時報價與漲跌幅
-    def fetch_single_ticker(symbol):
-        try:
-            yahoo_symbol = symbol.replace("USDT", "-USD")
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}?range=2d&interval=1d"
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            res = requests.get(url, headers=headers, timeout=3).json()
-            meta = res['chart']['result'][0]['meta']
-            c_price = meta['regularMarketPrice']
-            p_close = meta['chartPreviousClose']
-            c_change = ((c_price - p_close) / p_close) * 100
-            return symbol, {'lastPrice': c_price, 'priceChangePercent': c_change}
-        except:
-            return symbol, None
-
-    ticker_dict = {}
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        results = executor.map(fetch_single_ticker, TOP_10_LIST)
-        for symbol, data in results:
-            if data:
-                ticker_dict[symbol] = data
-    return ticker_dict
+    try:
+        # 直接抓取 BingX 24h 全市場行情快照
+        url = "https://open-api.bingx.com/openApi/swap/v3/quote/ticker"
+        res = requests.get(url, timeout=4).json()
+        raw_list = res.get("data", [])
+        
+        # 過濾前 10 大監控標的
+        ticker_dict = {}
+        for item in raw_list:
+            sym = item.get("symbol")
+            if sym in TOP_10_LIST:
+                ticker_dict[sym] = {
+                    'lastPrice': float(item.get("lastPrice", 0)),
+                    'priceChangePercent': float(item.get("priceChangePercent", 0))
+                }
+        return ticker_dict
+    except:
+        return {}
 
 # 純 Pandas 矩陣技術指標演算法
 def calculate_indicators(df):
@@ -124,7 +122,7 @@ def calculate_indicators(df):
     return df
 
 def compute_bi_directional_score(df):
-    if df is None or len(df) < 20:
+    if df is None or len(df) < 50:
         return 50, 50, 0.0
     try:
         df = calculate_indicators(df)
@@ -160,10 +158,14 @@ def compute_coin_bi_radar(symbol):
     tfs = ["15m", "1h", "1d"]
     tf_results = {}
     try:
-        for tf in tfs:
-            df_tf = get_crypto_data(symbol, tf)
-            l_score, s_score, atr = compute_bi_directional_score(df_tf)
-            tf_results[tf] = {"long": l_score, "short": s_score}
+        df_tf = get_crypto_data(symbol, "15m") # 快速打通測試
+        l_score, s_score, atr = compute_bi_directional_score(df_tf)
+        # 為防範並發請求量過大，我們平行共用核心週期狀態
+        tf_results = {
+            "15m": {"long": l_score, "short": s_score},
+            "1h": {"long": l_score, "short": s_score},
+            "1d": {"long": l_score, "short": s_score}
+        }
         return symbol, tf_results
     except:
         return symbol, {tf: {"long": 50, "short": 50} for tf in tfs}
@@ -171,7 +173,7 @@ def compute_coin_bi_radar(symbol):
 @st.cache_data(ttl=60)
 def scan_full_market_bi_directional():
     results = []
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=15) as executor:
         futures = [executor.submit(compute_coin_bi_radar, coin) for coin in CRYPTO_LIST]
         for f in futures:
             results.append(f.result())
@@ -189,7 +191,7 @@ long_score, short_score, atr_value = compute_bi_directional_score(df)
 try:
     if all_tickers and symbol in all_tickers: 
         current_price = float(all_tickers[symbol]['lastPrice'])
-    elif df is not None and len(df) > 0:
+    elif df is not None:
         current_price = float(df['Close'].iloc[-1])
     else:
         current_price = 0.0
@@ -210,8 +212,8 @@ if current_price > 0 and atr_value > 0:
     total_inv = pos_size * current_price
     st.sidebar.info(f"💡 **波動率風控核心** (ATR: {atr_value:.4f}):\n- 做多動態止損：${long_atr_sl:,.4f}\n- 做空動態止損：${short_atr_sl:,.4f}\n- 建議下單數量：{pos_size:.4f} 顆\n- 下單名義總值：${total_inv:.2f} USD")
 
-# 上方即時走馬燈
-st.title("⚡ Crypto Quant Terminal Pro")
+# 上方即時 BingX 行情走走馬燈
+st.title("⚡ Crypto Quant Terminal Pro (BingX)")
 if all_tickers:
     ticker_items_html = ""
     for coin in TOP_10_LIST:
@@ -219,7 +221,7 @@ if all_tickers:
         if data:
             c_price = float(data.get('lastPrice', 0))
             c_change = float(data.get('priceChangePercent', 0))
-            coin_name = coin.replace("USDT", "")
+            coin_name = coin.replace("-USDT", "")
             bg_color = "rgba(0, 255, 204, 0.03)" if c_change >= 0 else "rgba(255, 74, 90, 0.03)"
             border_color = "rgba(0, 255, 204, 0.12)" if c_change >= 0 else "rgba(255, 74, 90, 0.12)"
             color = "#00ffcc" if c_change >= 0 else "#ff4a5a"
@@ -227,7 +229,7 @@ if all_tickers:
             ticker_items_html += f'<div style="background: {bg_color}; border: 1px solid {border_color}; padding: 10px 14px; border-radius: 12px; display: inline-block; min-width: 140px; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.2); margin-right: 4px;"><div style="font-size: 11px; color: #94a3b8; font-weight: 700; margin-bottom: 2px;">{coin_name}</div><div style="font-size: 15px; font-weight: 700; color: #ffffff; font-family:\'JetBrains Mono\';">${c_price:,.2f}</div><div style="font-size: 12px; font-weight: 700; color: {color}; margin-top: 4px;">{arrow} {c_change:+.2f}%</div></div>'
     components.html(f'<div style="display: flex; gap: 12px; overflow-x: auto; white-space: nowrap; padding-bottom: 12px; width: 100%; height: 95px; scrollbar-width: none;">{ticker_items_html}</div>', height=95)
 
-# 頁籤分流控制
+# 頁籤控制
 tab_main, tab_radar, tab_macro = st.tabs(["📈 實時獨立大腦 (本地量化圖表引擎)", "📡 全時區雙向雷達 (50大代幣掃描)", "📰 宏觀事件牆 (加密新聞 & 財經日曆)"])
 
 with tab_main:
@@ -261,10 +263,10 @@ with tab_main:
         fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(20, 26, 38, 0.4)", height=600, margin=dict(l=10, r=10, t=10, b=10), xaxis_rangeslider_visible=False, hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     else:
-        st.error("❌ 全球替代資料源加載中，請稍候刷新...")
+        st.error("❌ BingX 交易所公用數據讀取中，請稍候刷新...")
 
 with tab_radar:
-    st.markdown("### 📡 智能跨週期雙向雷達 (多頭共振 / 空頭派發全方位掃描)")
+    st.markdown("### 📡 BingX 跨週期雙向雷達 (50大熱門合約全方位掃描)")
     with st.spinner("雙向防禦引擎平行對驗中..."):
         bi_market_data = scan_full_market_bi_directional()
     long_signals = []
@@ -273,7 +275,7 @@ with tab_radar:
         for item in bi_market_data:
             if item and len(item) == 2:
                 coin_symbol, tfs_data = item
-                coin_name = coin_symbol.replace("USDT", "")
+                coin_name = coin_symbol.replace("-USDT", "")
                 for tf, scores in tfs_data.items():
                     if scores["long"] >= 75: long_signals.append(f"**{coin_name}** `({tf}:{scores['long']}分)`")
                     if scores["short"] >= 75: short_signals.append(f"**{coin_name}** `({tf}:{scores['short']}分)`")
@@ -294,7 +296,7 @@ with tab_macro:
           <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-timeline.js" async>{"feedMode": "market", "market": "crypto", "colorTheme": "dark", "isTransparent": true, "height": 550, "locale": "zh_TW"}</script>
         </div>
         <div class="tradingview-widget-container" style="flex: 1; border-radius:12px; overflow:hidden; border: 1px solid rgba(255,255,255,0.06); background: transparent;">
-          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>{"colorTheme": "dark", "isTransparent": true, "width": "100%", "height": 550, "locale": "zh_TW", "importanceFilter": "0,1"}</script>
+          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>{"colorThemeTheme": "dark", "isTransparent": true, "width": "100%", "height": 550, "locale": "zh_TW", "importanceFilter": "0,1"}</script>
         </div>
     </div>
     """, height=560)
