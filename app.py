@@ -110,7 +110,17 @@ TOP_10_LIST = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT", "ADA-
 def get_crypto_data(symbol, interval):
     try:
         url = "https://open-api.bingx.com/openApi/swap/v3/quote/klines"
-        tf_map = {"15m": "15m", "1h": "60m", "4h": "4h", "1d": "1d"}
+        # ⚡ 核心擴充：新增 5m, 30m, 45m, 2h 到 API 欄位映射矩陣
+        tf_map = {
+            "5m": "5m", 
+            "15m": "15m", 
+            "30m": "30m", 
+            "45m": "45m", 
+            "1h": "60m", 
+            "2h": "2h", 
+            "4h": "4h", 
+            "1d": "1d"
+        }
         bingx_interval = tf_map.get(interval, "60m")
         params = {"symbol": symbol, "interval": bingx_interval, "limit": 150}
         res = requests.get(url, params=params, timeout=5).json()
@@ -215,9 +225,19 @@ def compute_coin_bi_radar(symbol):
     try:
         df_tf = get_crypto_data(symbol, "15m")
         l_score, s_score, atr = compute_bi_directional_score(df_tf)
-        return symbol, {"15m": {"long": l_score, "short": s_score}, "1h": {"long": l_score, "short": s_score}, "1d": {"long": l_score, "short": s_score}}
+        # ⚡ 補全快取結構：防範全市場掃描時的時區鍵值出錯
+        return symbol, {
+            "5m": {"long": l_score, "short": s_score},
+            "15m": {"long": l_score, "short": s_score},
+            "30m": {"long": l_score, "short": s_score},
+            "45m": {"long": l_score, "short": s_score},
+            "1h": {"long": l_score, "short": s_score},
+            "2h": {"long": l_score, "short": s_score},
+            "4h": {"long": l_score, "short": s_score},
+            "1d": {"long": l_score, "short": s_score}
+        }
     except:
-        return symbol, {tf: {"long": 50, "short": 50} for tf in ["15m", "1h", "1d"]}
+        return symbol, {tf: {"long": 50, "short": 50} for tf in ["5m", "15m", "30m", "45m", "1h", "2h", "4h", "1d"]}
 
 @st.cache_data(ttl=60)
 def scan_full_market_bi_directional():
@@ -252,20 +272,18 @@ if all_tickers:
 tab_main, tab_radar, tab_macro = st.tabs(["📈 實時分析台 (本地量價大腦)", "📡 全時區雙向雷達 (50大代幣監控)", "📰 宏觀事件牆 (加密新聞 & 財經日曆)"])
 
 # ----------------------------------------------------------------
-# 頁籤一：實時分析台 (內嵌控制中心黃金比例大改版)
+# 頁籤一：實時分析台
 # ----------------------------------------------------------------
 with tab_main:
-    # ⚡ ⚡ ⚡ 核心排版變更：建立全螢幕 1:3 比例的雙橫向網格
     main_col1, main_col2 = st.columns([1, 3], gap="medium")
     
-    # 📥 左側欄：高級嵌入式黑卡化控制中心 (佔 1/4 寬度)
     with main_col1:
         st.markdown('<div class="control-panel-box"><div class="panel-header">🎯 量化核心配置</div>', unsafe_allow_html=True)
         symbol = st.selectbox("分析核心標的", CRYPTO_LIST, label_visibility="collapsed")
-        interval = st.selectbox("時間顆粒度", ["15m", "1h", "4h", "1d"])
+        # ⚡ 核心擴充：在下拉選單元件中精準加入 5m, 30m, 45m, 2h 供策略切換
+        interval = st.selectbox("時間顆粒度", ["5m", "15m", "30m", "45m", "1h", "2h", "4h", "1d"])
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # 重新拉取並計算對應幣種數據
         df = get_crypto_data(symbol, interval)
         long_score, short_score, atr_value = compute_bi_directional_score(df)
         try:
@@ -297,7 +315,6 @@ with tab_main:
             """, unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # 📈 右側欄：決策大腦與專業量價終端圖表 (佔 3/4 寬度)
     with main_col2:
         if df is not None and len(df) >= 20 and current_price > 0:
             df = calculate_indicators(df)
@@ -306,19 +323,16 @@ with tab_main:
             macd_signal = df['MACDs'].iloc[-1]
             ema20 = df['EMA20'].iloc[-1]
             
-            # 技術因子網格快照
             c1, c2, c3, c4 = st.columns(4)
             with c1: st.metric("當前合約精確價", f"${current_price:,.4f}")
             with c2: st.metric("動態情緒 (RSI)", f"{rsi:.2f}", "過熱" if rsi > 70 else "超賣" if rsi < 30 else "穩定", delta_color="off")
             with c3: st.metric("MACD 動能柱", f"{(macd_line-macd_signal):.4f}")
             with c4: st.metric("EMA20 生命線", f"${ema20:,.4f}")
             
-            # 大腦決策提示引擎
             if long_score >= 75: st.success(f"🎯 **【多頭量價共振：{long_score} 分】** 有大資金主力掃盤，且踩穩籌碼支撐線，建議佈局多單。")
             elif short_score >= 75: st.error(f"⚠️ **【空頭放量派發：{short_score} 分】** 主力放量砸盤跌破籌碼峰，建議依軌道佈局空單。")
             else: st.info(f"⏳ **【市場多空拉鋸】 多頭：{long_score}分 | 空頭：{short_score}分** 籌碼區內縮量盤整，建議保持觀望。")
             
-            # 帶有籌碼峰與成交量的專業 Plotly 三子圖
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.02, row_width=[0.18, 0.18, 0.64])
             
             fig.add_trace(go.Candlestick(x=df['Open_time'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線", increasing=dict(fillcolor='#00ffcc', line=dict(color='#00ffcc')), decreasing=dict(fillcolor='#ff4a5a', line=dict(color='#ff4a5a')), yhoverformat=",.1f"), row=1, col=1)
@@ -326,7 +340,6 @@ with tab_main:
             fig.add_trace(go.Scatter(x=df['Open_time'], y=df['BBU'], line=dict(color='rgba(0, 188, 255, 0.3)', width=1, dash='dash'), name="布林上軌", yhoverformat=",.1f"), row=1, col=1)
             fig.add_trace(go.Scatter(x=df['Open_time'], y=df['BBL'], line=dict(color='rgba(0, 188, 255, 0.3)', width=1, dash='dash'), name="布林下軌", yhoverformat=",.1f"), row=1, col=1)
             
-            # 籌碼 Profile 矩陣計算
             price_min, price_max = df['Low'].min(), df['High'].max()
             bins = np.linspace(price_min, price_max, 25)
             vol_counts, bin_edges = np.histogram(df['Close'], bins=bins, weights=df['Volume'])
@@ -361,11 +374,9 @@ with tab_main:
             
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
         else:
-            st.error("❌ BingX 交易所公用數據讀取中，請稍候...")
+            st.error("❌ BingX 交易所公用數據讀取中，請稍候刷新...")
 
-# ----------------------------------------------------------------
-# 頁籤二：全時區雙向雷達
-# ----------------------------------------------------------------
+# 📡 頁籤二
 with tab_radar:
     st.markdown("### 📡 BingX 跨週期雙向雷達 (50大熱門合約全方位掃描)")
     with st.spinner("雙向防禦引擎平行對驗中..."): bi_market_data = scan_full_market_bi_directional()
@@ -387,9 +398,7 @@ with tab_radar:
         if short_signals: st.error(f"⚠️ **空頭強烈派發（建議做空）**：\n\n" + " &nbsp;•&nbsp; ".join(short_signals))
         else: st.markdown("<div style='padding:12px; border-radius:10px; background:rgba(255,255,255,0.02); color:#94a3b8;'>🎰 市場結構穩定，暫無空頭派發資產。</div>", unsafe_allow_html=True)
 
-# ----------------------------------------------------------------
-# 頁籤三：宏觀事件牆
-# ----------------------------------------------------------------
+# 📰 頁籤三
 with tab_macro:
     st.markdown("### 📰 華爾街即時財經週報與事件牆")
     components.html("""
