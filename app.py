@@ -36,40 +36,22 @@ CRYPTO_LIST = [
 ]
 TOP_10_LIST = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT", "ADA-USDT", "DOGE-USDT", "DOT-USDT", "AVAX-USDT", "LINK-USDT"]
 
-# ⚡ ⚡ ⚡ 核心功能：對接 BingX 永續合約公開行情介面
 def get_crypto_data(symbol, interval):
     try:
-        # BingX 域名與標準合約 K 線路徑
         url = "https://open-api.bingx.com/openApi/swap/v3/quote/klines"
-        
-        # 映射時間粒度 (適應 BingX 的時間參數結構)
         tf_map = {"15m": "15m", "1h": "60m", "4h": "4h", "1d": "1d"}
         bingx_interval = tf_map.get(interval, "60m")
-        
-        params = {
-            "symbol": symbol,
-            "interval": bingx_interval,
-            "limit": 150
-        }
-        
+        params = {"symbol": symbol, "interval": bingx_interval, "limit": 150}
         res = requests.get(url, params=params, timeout=5).json()
         raw_data = res.get("data", [])
-        
-        if not raw_data:
-            return None
-            
-        # BingX 返回格式為列表套字典，或是逆序數組，我們直接轉成 DataFrame 矩陣
+        if not raw_data: return None
         df = pd.DataFrame(raw_data)
-        
-        # 轉換時間與型態對齊
         df['Open_time'] = pd.to_datetime(df['time'], unit='ms') + pd.Timedelta(hours=8)
         df['Open'] = df['open'].astype(float)
         df['High'] = df['high'].astype(float)
         df['Low'] = df['low'].astype(float)
         df['Close'] = df['close'].astype(float)
         df['Volume'] = df['volume'].astype(float)
-        
-        # 確保順序是由舊到新（符合技術指標計算邏輯）
         df = df.sort_values(by='Open_time').reset_index(drop=True)
         return df[['Open_time', 'Open', 'High', 'Low', 'Close', 'Volume']]
     except:
@@ -77,12 +59,9 @@ def get_crypto_data(symbol, interval):
 
 def get_all_tickers():
     try:
-        # 直接抓取 BingX 24h 全市場行情快照
         url = "https://open-api.bingx.com/openApi/swap/v3/quote/ticker"
         res = requests.get(url, timeout=4).json()
         raw_list = res.get("data", [])
-        
-        # 過濾前 10 大監控標的
         ticker_dict = {}
         for item in raw_list:
             sym = item.get("symbol")
@@ -155,12 +134,9 @@ def compute_bi_directional_score(df):
         return 50, 50, 0.0
 
 def compute_coin_bi_radar(symbol):
-    tfs = ["15m", "1h", "1d"]
-    tf_results = {}
     try:
-        df_tf = get_crypto_data(symbol, "15m") # 快速打通測試
+        df_tf = get_crypto_data(symbol, "15m")
         l_score, s_score, atr = compute_bi_directional_score(df_tf)
-        # 為防範並發請求量過大，我們平行共用核心週期狀態
         tf_results = {
             "15m": {"long": l_score, "short": s_score},
             "1h": {"long": l_score, "short": s_score},
@@ -168,7 +144,7 @@ def compute_coin_bi_radar(symbol):
         }
         return symbol, tf_results
     except:
-        return symbol, {tf: {"long": 50, "short": 50} for tf in tfs}
+        return symbol, {tf: {"long": 50, "short": 50} for tf in ["15m", "1h", "1d"]}
 
 @st.cache_data(ttl=60)
 def scan_full_market_bi_directional():
@@ -189,12 +165,9 @@ all_tickers = get_all_tickers()
 long_score, short_score, atr_value = compute_bi_directional_score(df)
 
 try:
-    if all_tickers and symbol in all_tickers: 
-        current_price = float(all_tickers[symbol]['lastPrice'])
-    elif df is not None:
-        current_price = float(df['Close'].iloc[-1])
-    else:
-        current_price = 0.0
+    if all_tickers and symbol in all_tickers: current_price = float(all_tickers[symbol]['lastPrice'])
+    elif df is not None: current_price = float(df['Close'].iloc[-1])
+    else: current_price = 0.0
 except:
     current_price = 0.0
 
@@ -212,7 +185,7 @@ if current_price > 0 and atr_value > 0:
     total_inv = pos_size * current_price
     st.sidebar.info(f"💡 **波動率風控核心** (ATR: {atr_value:.4f}):\n- 做多動態止損：${long_atr_sl:,.4f}\n- 做空動態止損：${short_atr_sl:,.4f}\n- 建議下單數量：{pos_size:.4f} 顆\n- 下單名義總值：${total_inv:.2f} USD")
 
-# 上方即時 BingX 行情走走馬燈
+# 上方即時走馬燈
 st.title("⚡ Crypto Quant Terminal Pro (BingX)")
 if all_tickers:
     ticker_items_html = ""
@@ -252,15 +225,39 @@ with tab_main:
         else: st.info(f"⏳ **【市場多空拉鋸】 多頭：{long_score}分 | 空頭：{short_score}分** 建議：多空動能不顯著，建議保持觀望。")
         
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_width=[0.25, 0.75])
-        fig.add_trace(go.Candlestick(x=df['Open_time'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線", increasing=dict(fillcolor='#00ffcc', line=dict(color='#00ffcc')), decreasing=dict(fillcolor='#ff4a5a', line=dict(color='#ff4a5a'))), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df['Open_time'], y=df['EMA20'], line=dict(color='#ffcc00', width=1.5), name="EMA20"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df['Open_time'], y=df['BBU'], line=dict(color='rgba(0, 188, 255, 0.3)', width=1, dash='dash'), name="布林上軌"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df['Open_time'], y=df['BBL'], line=dict(color='rgba(0, 188, 255, 0.3)', width=1, dash='dash'), name="布林下軌"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df['Open_time'], y=df['RSI'], line=dict(color='#00bcff', width=1.5), name="RSI"), row=2, col=1)
+        
+        # ⚡ 修正點 1：為 K 線指定 yhoverformat，去除 k 簡寫並加入千分位與保留一位小數
+        fig.add_trace(go.Candlestick(
+            x=df['Open_time'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], 
+            name="K線", 
+            increasing=dict(fillcolor='#00ffcc', line=dict(color='#00ffcc')), 
+            decreasing=dict(fillcolor='#ff4a5a', line=dict(color='#ff4a5a')),
+            yhoverformat=",.1f"
+        ), row=1, col=1)
+        
+        # ⚡ 修正點 2：同步修正 EMA20 趨勢線的滑鼠懸停數值格式
+        fig.add_trace(go.Scatter(x=df['Open_time'], y=df['EMA20'], line=dict(color='#ffcc00', width=1.5), name="EMA20", yhoverformat=",.1f"), row=1, col=1)
+        
+        # ⚡ 修正點 3：同步修正布林通道上軌與下軌的滑鼠懸停數值格式
+        fig.add_trace(go.Scatter(x=df['Open_time'], y=df['BBU'], line=dict(color='rgba(0, 188, 255, 0.3)', width=1, dash='dash'), name="布林上軌", yhoverformat=",.1f"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df['Open_time'], y=df['BBL'], line=dict(color='rgba(0, 188, 255, 0.3)', width=1, dash='dash'), name="布林下軌", yhoverformat=",.1f"), row=1, col=1)
+        
+        # RSI 屬於獨立的百分比副圖指標，維持保留兩位小數的標準數值格式
+        fig.add_trace(go.Scatter(x=df['Open_time'], y=df['RSI'], line=dict(color='#00bcff', width=1.5), name="RSI", yhoverformat=".2f"), row=2, col=1)
         fig.add_hline(y=70, line_dash="dash", line_color="rgba(255, 74, 90, 0.4)", row=2, col=1)
         fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.4)", row=2, col=1)
         
-        fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(20, 26, 38, 0.4)", height=600, margin=dict(l=10, r=10, t=10, b=10), xaxis_rangeslider_visible=False, hovermode="x unified")
+        # ⚡ 修正點 4：優化全局 hoverlabel 的排版樣式，確保不使用簡寫並靠左對齊
+        fig.update_layout(
+            template="plotly_dark", 
+            paper_bgcolor="rgba(0,0,0,0)", 
+            plot_bgcolor="rgba(20, 26, 38, 0.4)", 
+            height=600, 
+            margin=dict(l=10, r=10, t=10, b=10), 
+            xaxis_rangeslider_visible=False, 
+            hovermode="x unified",
+            hoverlabel=dict(namelength=-1, font_family="JetBrains Mono") # 防止名稱被截斷
+        )
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     else:
         st.error("❌ BingX 交易所公用數據讀取中，請稍候刷新...")
@@ -296,7 +293,7 @@ with tab_macro:
           <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-timeline.js" async>{"feedMode": "market", "market": "crypto", "colorTheme": "dark", "isTransparent": true, "height": 550, "locale": "zh_TW"}</script>
         </div>
         <div class="tradingview-widget-container" style="flex: 1; border-radius:12px; overflow:hidden; border: 1px solid rgba(255,255,255,0.06); background: transparent;">
-          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>{"colorThemeTheme": "dark", "isTransparent": true, "width": "100%", "height": 550, "locale": "zh_TW", "importanceFilter": "0,1"}</script>
+          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>{"colorTheme": "dark", "isTransparent": true, "width": "100%", "height": 550, "locale": "zh_TW", "importanceFilter": "0,1"}</script>
         </div>
     </div>
     """, height=560)
