@@ -12,24 +12,33 @@ from concurrent.futures import ThreadPoolExecutor
 st.set_page_config(page_title="Crypto Quant Terminal Pro", layout="wide", initial_sidebar_state="collapsed")
 st_autorefresh(interval=5000, key="crypto_terminal_refresh")
 
-# 👑 全局賽博黑卡化視覺引擎 (CSS 深度客製化)
+# 全局賽博黑卡化視覺引擎 (精確隱雜項，完美保留主標題)
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;600;800&display=swap');
     
-    /* 頂級極暗背景 */
+    /* 精確隱藏部署、側邊欄按鈕、頁籤殘留，不誤傷主標題容器 */
+    [data-testid="collapsedControl"], .stAppDeployButton, #tabs-bui3-tab-0, [data-testid="stSidebarCollapse"] { 
+        display: none !important; 
+        visibility: hidden !important; 
+        height: 0px !important;
+        width: 0px !important;
+    }
+    
+    header {
+        background-color: transparent !important;
+    }
+    
     .stApp { 
         background: radial-gradient(circle at 50% 0%, #0d111a 0%, #05070a 100%); 
         font-family: 'Inter', sans-serif; 
         color: #e2e8f0; 
     }
     
-    /* 隱藏原生側邊欄按鈕與多餘白邊 */
-    [data-testid="collapsedControl"] { display: none; }
-    .block-container { padding: 1rem 2rem !important; max-width: 100% !important; }
+    .block-container { padding: 0.5rem 2rem 1rem 2rem !important; max-width: 100% !important; }
     
-    /* 漸層標題與霓虹微光 */
-    h1 { 
+    /* 終端主標題專用樣式 */
+    .terminal-title { 
         font-family: 'Inter', sans-serif; 
         color: #ffffff; 
         font-weight: 800 !important; 
@@ -38,10 +47,11 @@ st.markdown("""
         -webkit-background-clip: text; 
         -webkit-text-fill-color: transparent; 
         font-size: 2.2rem !important; 
-        margin-bottom: 0.5rem !important;
+        margin-bottom: 0.8rem !important;
+        margin-top: 5px !important;
+        display: block;
     }
     
-    /* 內嵌控制中心 - 高級黑卡化毛玻璃艙 */
     .control-panel-box {
         background: linear-gradient(135deg, rgba(16, 22, 34, 0.85) 0%, rgba(10, 14, 22, 0.95) 100%);
         backdrop-filter: blur(20px);
@@ -63,7 +73,6 @@ st.markdown("""
         padding-left: 10px;
     }
     
-    /* 風控數據網格 */
     .risk-grid {
         background: rgba(255, 255, 255, 0.02);
         border: 1px solid rgba(255, 255, 255, 0.04);
@@ -81,7 +90,6 @@ st.markdown("""
     .risk-label { color: #94a3b8; }
     .risk-value { color: #ffffff; font-weight: 700; }
     
-    /* Metric 卡片微調 */
     div[data-testid="stMetric"] { 
         background: rgba(16, 22, 34, 0.5) !important; 
         border: 1px solid rgba(255, 255, 255, 0.04) !important; 
@@ -89,38 +97,23 @@ st.markdown("""
         padding: 12px 16px !important; 
     }
     
-    /* 頁籤微調 */
-    button[data-baseweb="tab"] { 
-        font-size: 15px !important;
-        padding: 12px 24px !important;
-    }
+    button[data-baseweb="tab"] { font-size: 15px !important; padding: 12px 24px !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# 📋 50 大熱門合約代幣資產清單
+# 📋 40 大 BingX 永續合約（Swap）常駐且流動性最優資產池 (徹底洗滌，100% 存在)
 CRYPTO_LIST = [
     "BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT", "ADA-USDT", "DOGE-USDT", "DOT-USDT", "AVAX-USDT", "LINK-USDT",
-    "SHIB-USDT", "TON-USDT", "SUI-USDT", "NEAR-USDT", "APT-USDT", "FET-USDT", "OP-USDT", "ARB-USDT", "WIF-USDT", "PEPE-USDT",
-    "MATIC-USDT", "LTC-USDT", "UNI-USDT", "ICP-USDT", "FIL-USDT", "STX-USDT", "IMX-USDT", "GRT-USDT", "RNDR-USDT", "THETA-USDT",
-    "ATOM-USDT", "XLM-USDT", "HBAR-USDT", "MKR-USDT", "LDO-USDT", "TIA-USDT", "INJ-USDT", "WLD-USDT", "SEI-USDT", "FTM-USDT",
-    "PENDLE-USDT", "JUP-USDT", "PYTH-USDT", "BONK-USDT", "FLOKI-USDT", "ORDI-USDT", "1INCH-USDT", "CRV-USDT", "ALGO-USDT", "EGLD-USDT"
+    "SHIB-USDT", "SUI-USDT", "NEAR-USDT", "APT-USDT", "OP-USDT", "ARB-USDT", "POL-USDT", "LTC-USDT", "UNI-USDT", "ICP-USDT", 
+    "FIL-USDT", "STX-USDT", "IMX-USDT", "GRT-USDT", "THETA-USDT", "ATOM-USDT", "XLM-USDT", "HBAR-USDT", "MKR-USDT", "LDO-USDT", 
+    "TIA-USDT", "INJ-USDT", "WLD-USDT", "SEI-USDT", "PENDLE-USDT", "JUP-USDT", "PYTH-USDT", "ORDI-USDT", "1INCH-USDT", "CRV-USDT"
 ]
 TOP_10_LIST = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT", "ADA-USDT", "DOGE-USDT", "DOT-USDT", "AVAX-USDT", "LINK-USDT"]
 
 def get_crypto_data(symbol, interval):
     try:
         url = "https://open-api.bingx.com/openApi/swap/v3/quote/klines"
-        # ⚡ 核心擴充：新增 5m, 30m, 45m, 2h 到 API 欄位映射矩陣
-        tf_map = {
-            "5m": "5m", 
-            "15m": "15m", 
-            "30m": "30m", 
-            "45m": "45m", 
-            "1h": "60m", 
-            "2h": "2h", 
-            "4h": "4h", 
-            "1d": "1d"
-        }
+        tf_map = {"5m": "5m", "15m": "15m", "30m": "30m", "45m": "45m", "1h": "60m", "2h": "2h", "4h": "4h", "1d": "1d"}
         bingx_interval = tf_map.get(interval, "60m")
         params = {"symbol": symbol, "interval": bingx_interval, "limit": 150}
         res = requests.get(url, params=params, timeout=5).json()
@@ -222,22 +215,16 @@ def compute_bi_directional_score(df):
         return 50, 50, 0.0
 
 def compute_coin_bi_radar(symbol):
+    scan_tfs = ["15m", "1h", "4h"]
+    tf_results = {}
     try:
-        df_tf = get_crypto_data(symbol, "15m")
-        l_score, s_score, atr = compute_bi_directional_score(df_tf)
-        # ⚡ 補全快取結構：防範全市場掃描時的時區鍵值出錯
-        return symbol, {
-            "5m": {"long": l_score, "short": s_score},
-            "15m": {"long": l_score, "short": s_score},
-            "30m": {"long": l_score, "short": s_score},
-            "45m": {"long": l_score, "short": s_score},
-            "1h": {"long": l_score, "short": s_score},
-            "2h": {"long": l_score, "short": s_score},
-            "4h": {"long": l_score, "short": s_score},
-            "1d": {"long": l_score, "short": s_score}
-        }
+        for tf in scan_tfs:
+            df_tf = get_crypto_data(symbol, tf)
+            l_score, s_score, _ = compute_bi_directional_score(df_tf)
+            tf_results[tf] = {"long": l_score, "short": s_score}
+        return symbol, tf_results
     except:
-        return symbol, {tf: {"long": 50, "short": 50} for tf in ["5m", "15m", "30m", "45m", "1h", "2h", "4h", "1d"]}
+        return symbol, {tf: {"long": 50, "short": 50} for tf in scan_tfs}
 
 @st.cache_data(ttl=60)
 def scan_full_market_bi_directional():
@@ -247,11 +234,10 @@ def scan_full_market_bi_directional():
         for f in futures: results.append(f.result())
     return results
 
-# ----------------------------------------------------------------
-# 👑 主畫面架構與即時行情走馬燈
-# ----------------------------------------------------------------
-st.title("⚡ Crypto Quant Terminal Pro")
+# 👑 頂級主標題重置復位
+st.markdown('<span class="terminal-title">⚡ Crypto Quant Terminal Pro</span>', unsafe_allow_html=True)
 
+# 👑 即時行情看盤走馬燈
 all_tickers = get_all_tickers()
 if all_tickers:
     ticker_items_html = ""
@@ -268,19 +254,14 @@ if all_tickers:
             ticker_items_html += f'<div style="background: {bg_color}; border: 1px solid {border_color}; padding: 8px 12px; border-radius: 10px; display: inline-block; min-width: 135px; text-align: center; margin-right: 4px;"><div style="font-size: 11px; color: #94a3b8; font-weight: 700; margin-bottom: 1px;">{coin_name}</div><div style="font-size: 14px; font-weight: 700; color: #ffffff; font-family:\'JetBrains Mono\';">${c_price:,.1f}</div><div style="font-size: 11px; font-weight: 700; color: {color}; margin-top: 2px;">{arrow} {c_change:+.2f}%</div></div>'
     components.html(f'<div style="display: flex; gap: 8px; overflow-x: auto; white-space: nowrap; padding-bottom: 5px; width: 100%; height: 85px; scrollbar-width: none;">{ticker_items_html}</div>', height=85)
 
-# 高級分流頁籤
-tab_main, tab_radar, tab_macro = st.tabs(["📈 實時分析台 (本地量價大腦)", "📡 全時區雙向雷達 (50大代幣監控)", "📰 宏觀事件牆 (加密新聞 & 財經日曆)"])
+tab_main, tab_radar, tab_macro = st.tabs(["📈 實時分析台 (本地量價大腦)", "📡 全時區雙向雷達 (40大代幣監控)", "📰 宏觀事件牆 (加密新聞 & 財經日曆)"])
 
-# ----------------------------------------------------------------
-# 頁籤一：實時分析台
-# ----------------------------------------------------------------
 with tab_main:
     main_col1, main_col2 = st.columns([1, 3], gap="medium")
     
     with main_col1:
         st.markdown('<div class="control-panel-box"><div class="panel-header">🎯 量化核心配置</div>', unsafe_allow_html=True)
         symbol = st.selectbox("分析核心標的", CRYPTO_LIST, label_visibility="collapsed")
-        # ⚡ 核心擴充：在下拉選單元件中精準加入 5m, 30m, 45m, 2h 供策略切換
         interval = st.selectbox("時間顆粒度", ["5m", "15m", "30m", "45m", "1h", "2h", "4h", "1d"])
         st.markdown('</div>', unsafe_allow_html=True)
         
@@ -313,7 +294,6 @@ with tab_main:
                     <div class="risk-item" style="margin-bottom:0px;"><span class="risk-label">名義總價值</span><span class="risk-value" style="color:#ffcc00;">${total_inv:,.2f} USD</span></div>
                 </div>
             """, unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
 
     with main_col2:
         if df is not None and len(df) >= 20 and current_price > 0:
@@ -329,9 +309,11 @@ with tab_main:
             with c3: st.metric("MACD 動能柱", f"{(macd_line-macd_signal):.4f}")
             with c4: st.metric("EMA20 生命線", f"${ema20:,.4f}")
             
-            if long_score >= 75: st.success(f"🎯 **【多頭量價共振：{long_score} 分】** 有大資金主力掃盤，且踩穩籌碼支撐線，建議佈局多單。")
-            elif short_score >= 75: st.error(f"⚠️ **【空頭放量派發：{short_score} 分】** 主力放量砸盤跌破籌碼峰，建議依軌道佈局空單。")
-            else: st.info(f"⏳ **【市場多空拉鋸】 多頭：{long_score}分 | 空頭：{short_score}分** 籌碼區內縮量盤整，建議保持觀望。")
+            if long_score >= 80: st.success(f"🎯 🔥 **【一級多頭量價共振：{long_score} 分】** 頂級機構吸籌突破，強烈建議介入多單。")
+            elif long_score >= 65: st.success(f"⚡ 📈 **【二級多頭趨勢跟隨：{long_score} 分】** 右側多頭動能確認，具備短線交易波段空間。")
+            elif short_score >= 80: st.error(f"⚠️ 🔥 **【一級空頭放量派發：{short_score} 分】** 主力砸盤破位成本區，強烈建議介入空單。")
+            elif short_score >= 65: st.error(f"⚡ 📉 **【二級空頭趨勢跟隨：{short_score} 分】** 右側空頭趨勢確認，具備短線放空空間。")
+            else: st.info(f"⏳ **【市場縮量拉鋸】 多頭：{long_score}分 | 空頭：{short_score}分** 處於主力成本區內橫盤，建議觀望。")
             
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.02, row_width=[0.18, 0.18, 0.64])
             
@@ -376,29 +358,37 @@ with tab_main:
         else:
             st.error("❌ BingX 交易所公用數據讀取中，請稍候刷新...")
 
-# 📡 頁籤二
+# 📡 頁籤二：多時區階梯式雷達
 with tab_radar:
-    st.markdown("### 📡 BingX 跨週期雙向雷達 (50大熱門合約全方位掃描)")
-    with st.spinner("雙向防禦引擎平行對驗中..."): bi_market_data = scan_full_market_bi_directional()
-    long_signals, short_signals = [], []
+    st.markdown("### 📡 BingX 跨週期雙向雷達 (40大熱門合約多時區平行掃描)")
+    with st.spinner("跨時區防禦矩陣平行對驗中..."): bi_market_data = scan_full_market_bi_directional()
+    long_signals_tier1, long_signals_tier2 = [], []
+    short_signals_tier1, short_signals_tier2 = [], []
+    
     if bi_market_data:
         for item in bi_market_data:
             if item and len(item) == 2:
                 coin_symbol, tfs_data = item
                 coin_name = coin_symbol.replace("-USDT", "")
                 for tf, scores in tfs_data.items():
-                    if scores["long"] >= 75: long_signals.append(f"**{coin_name}** `({tf}:{scores['long']}分)`")
-                    if scores["short"] >= 75: short_signals.append(f"**{coin_name}** `({tf}:{scores['short']}分)`")
+                    if scores["long"] >= 80: long_signals_tier1.append(f"**{coin_name}** `({tf}:{scores['long']}分)`")
+                    elif scores["long"] >= 65: long_signals_tier2.append(f"**{coin_name}** `({tf}:{scores['long']}分)`")
+                    
+                    if scores["short"] >= 80: short_signals_tier1.append(f"**{coin_name}** `({tf}:{scores['short']}分)`")
+                    elif scores["short"] >= 65: short_signals_tier2.append(f"**{coin_name}** `({tf}:{scores['short']}分)`")
                     
     radar_c1, radar_c2 = st.columns(2)
     with radar_c1:
-        if long_signals: st.success(f"🎯 **多頭強力共振（建議做多）**：\n\n" + " &nbsp;•&nbsp; ".join(long_signals))
-        else: st.markdown("<div style='padding:12px; border-radius:10px; background:rgba(255,255,255,0.02); color:#94a3b8;'>🎰 市場無多頭共振資產。已啟動過濾。</div>", unsafe_allow_html=True)
+        if long_signals_tier1: st.success("🔥 **【一級多頭強力共振（精選重倉機會）】**：\n\n" + " &nbsp;•&nbsp; ".join(long_signals_tier1))
+        if long_signals_tier2: st.info("📈 **【二級多頭趨勢確認（日常波段機會）】**：\n\n" + " &nbsp;•&nbsp; ".join(long_signals_tier2))
+        if not long_signals_tier1 and not long_signals_tier2: st.markdown("<div style='padding:12px; border-radius:10px; background:rgba(255,255,255,0.02); color:#94a3b8;'>🎰 市場多頭目前無符合篩選。</div>", unsafe_allow_html=True)
+        
     with radar_c2:
-        if short_signals: st.error(f"⚠️ **空頭強烈派發（建議做空）**：\n\n" + " &nbsp;•&nbsp; ".join(short_signals))
-        else: st.markdown("<div style='padding:12px; border-radius:10px; background:rgba(255,255,255,0.02); color:#94a3b8;'>🎰 市場結構穩定，暫無空頭派發資產。</div>", unsafe_allow_html=True)
+        if short_signals_tier1: st.error("⚠️ **【一級空頭強力派發（精選重倉機會）】**：\n\n" + " &nbsp;•&nbsp; ".join(short_signals_tier1))
+        if short_signals_tier2: st.warning("📉 **【二級空頭趨勢確認（日常波段機會）】**：\n\n" + " &nbsp;•&nbsp; ".join(short_signals_tier2))
+        if not short_signals_tier1 and not short_signals_tier2: st.markdown("<div style='padding:12px; border-radius:10px; background:rgba(255,255,255,0.02); color:#94a3b8;'>🎰 市場結構穩定，暫無空頭訊號。</div>", unsafe_allow_html=True)
 
-# 📰 頁籤三
+# 📰 宏觀事件牆
 with tab_macro:
     st.markdown("### 📰 華爾街即時財經週報與事件牆")
     components.html("""
