@@ -1,6 +1,9 @@
 streamlit
 pandas
-pandas-ta
 requests
 streamlit-autorefresh
 plotly
+numpy<2.0.0
+scipy
+--index-url https://pypi.org/simple
+https://github.com/twopirllc/pandas-ta/archive/refs/heads/development.zip
