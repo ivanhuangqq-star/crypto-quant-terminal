@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import requests
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -26,7 +27,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 50 大熱門合約代幣資產清單 (適應 BingX 標準格式 symbol-USDT)
+# 50 大熱門合約代幣資產清單
 CRYPTO_LIST = [
     "BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT", "ADA-USDT", "DOGE-USDT", "DOT-USDT", "AVAX-USDT", "LINK-USDT",
     "SHIB-USDT", "TON-USDT", "SUI-USDT", "NEAR-USDT", "APT-USDT", "FET-USDT", "OP-USDT", "ARB-USDT", "WIF-USDT", "PEPE-USDT",
@@ -224,9 +225,15 @@ with tab_main:
         elif short_score >= 75: st.error(f"⚠️ **【空頭核心派發：{short_score} 分】** 建議：嚴禁建倉多單。建議依風控軌道佈局空單。")
         else: st.info(f"⏳ **【市場多空拉鋸】 多頭：{long_score}分 | 空頭：{short_score}分** 建議：多空動能不顯著，建議保持觀望。")
         
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_width=[0.25, 0.75])
+        st.markdown(f"### 📈 {symbol} 獨立量價特製終端 (含籌碼分佈 Profile)")
         
-        # ⚡ 修正點 1：為 K 線指定 yhoverformat，去除 k 簡寫並加入千分位與保留一位小數
+        # ⚡ ⚡ ⚡ 升級為三子圖架構：主 K 線（60%）、交易量副圖（20%）、RSI副圖（20%）
+        fig = make_subplots(
+            rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, 
+            row_width=[0.20, 0.20, 0.60]
+        )
+        
+        # 1. 繪製主圖 K 線
         fig.add_trace(go.Candlestick(
             x=df['Open_time'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], 
             name="K線", 
@@ -235,33 +242,70 @@ with tab_main:
             yhoverformat=",.1f"
         ), row=1, col=1)
         
-        # ⚡ 修正點 2：同步修正 EMA20 趨勢線的滑鼠懸停數值格式
+        # 2. 疊加 EMA20 與布林通道
         fig.add_trace(go.Scatter(x=df['Open_time'], y=df['EMA20'], line=dict(color='#ffcc00', width=1.5), name="EMA20", yhoverformat=",.1f"), row=1, col=1)
-        
-        # ⚡ 修正點 3：同步修正布林通道上軌與下軌的滑鼠懸停數值格式
         fig.add_trace(go.Scatter(x=df['Open_time'], y=df['BBU'], line=dict(color='rgba(0, 188, 255, 0.3)', width=1, dash='dash'), name="布林上軌", yhoverformat=",.1f"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df['Open_time'], y=df['BBL'], line=dict(color='rgba(0, 188, 255, 0.3)', width=1, dash='dash'), name="布林下軌", yhoverformat=",.1f"), row=1, col=1)
         
-        # RSI 屬於獨立的百分比副圖指標，維持保留兩位小數的標準數值格式
-        fig.add_trace(go.Scatter(x=df['Open_time'], y=df['RSI'], line=dict(color='#00bcff', width=1.5), name="RSI", yhoverformat=".2f"), row=2, col=1)
-        fig.add_hline(y=70, line_dash="dash", line_color="rgba(255, 74, 90, 0.4)", row=2, col=1)
-        fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.4)", row=2, col=1)
+        # ⚡ 3. 核心算法：動態繪製左側橫向籌碼峰 (Volume Profile)
+        price_min, price_max = df['Low'].min(), df['High'].max()
+        bins = np.linspace(price_min, price_max, 25) # 將價格空間切為 24 個橫向區間
         
-        # ⚡ 修正點 4：優化全局 hoverlabel 的排版樣式，確保不使用簡寫並靠左對齊
+        # 計算每個區間對應的成交量總和
+        vol_counts, bin_edges = np.histogram(df['Close'], bins=bins, weights=df['Volume'])
+        max_vol = max(vol_counts) if len(vol_counts) > 0 else 1
+        
+        # 找出籌碼峰最大控制線 (POC)
+        poc_idx = np.argmax(vol_counts)
+        poc_price = (bin_edges[poc_idx] + bin_edges[poc_idx+1]) / 2
+        
+        # 在主圖橫向繪製籌碼條
+        for i in range(len(vol_counts)):
+            bin_y = (bin_edges[i] + bin_edges[i+1]) / 2
+            bar_width = (vol_counts[i] / max_vol) * (len(df) * 0.15) # 橫向長度最多佔圖表左側 15%
+            
+            # 使用 K 線時間軸起點向右延伸出橫向矩陣條
+            start_x = df['Open_time'].iloc[0]
+            end_x = df['Open_time'].iloc[int(bar_width)] if int(bar_width) > 0 else start_x
+            
+            color = "rgba(0, 255, 204, 0.15)" if bin_y >= df['EMA20'].iloc[-1] else "rgba(255, 74, 90, 0.15)"
+            if i == poc_idx: color = "rgba(255, 204, 0, 0.4)" # POC 主力成本區加亮
+            
+            fig.add_shape(
+                type="rect", x0=start_x, y0=bin_edges[i], x1=end_x, y1=bin_edges[i+1],
+                fillcolor=color, line_width=0, row=1, col=1
+            )
+            
+        # 標註 POC 機構防線
+        fig.add_hline(y=poc_price, line_dash="solid", line_color="rgba(255, 204, 0, 0.6)", line_width=1.5, annotation_text=f"POC成本區: {poc_price:,.1f}", row=1, col=1)
+        
+        # ⚡ 4. 繪製副圖一：縱向交易量柱狀圖 (Volume Bars)
+        colors_vol = [ '#00ffcc' if df['Close'].iloc[i] >= df['Open'].iloc[i] else '#ff4a5a' for i in range(len(df)) ]
+        fig.add_trace(go.Bar(
+            x=df['Open_time'], y=df['Volume'], 
+            marker_color=colors_vol, name="交易量", 
+            yhoverformat=",.0f"
+        ), row=2, col=1)
+        
+        # 5. 繪製副圖二：RSI
+        fig.add_trace(go.Scatter(x=df['Open_time'], y=df['RSI'], line=dict(color='#00bcff', width=1.5), name="RSI", yhoverformat=".2f"), row=3, col=1)
+        fig.add_hline(y=70, line_dash="dash", line_color="rgba(255, 74, 90, 0.4)", row=3, col=1)
+        fig.add_hline(y=30, line_dash="dash", line_color="rgba(0, 255, 204, 0.4)", row=3, col=1)
+        
+        # 控制全局排版與 Hover
         fig.update_layout(
-            template="plotly_dark", 
-            paper_bgcolor="rgba(0,0,0,0)", 
-            plot_bgcolor="rgba(20, 26, 38, 0.4)", 
-            height=600, 
-            margin=dict(l=10, r=10, t=10, b=10), 
-            xaxis_rangeslider_visible=False, 
-            hovermode="x unified",
-            hoverlabel=dict(namelength=-1, font_family="JetBrains Mono") # 防止名稱被截斷
+            template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(20, 26, 38, 0.4)", 
+            height=700, margin=dict(l=10, r=10, t=10, b=10), xaxis_rangeslider_visible=False, 
+            hovermode="x unified", hoverlabel=dict(namelength=-1, font_family="JetBrains Mono")
         )
+        fig.update_yaxes(gridcolor='rgba(255,255,255,0.03)', zeroline=False)
+        fig.update_xaxes(gridcolor='rgba(255,255,255,0.03)')
+        
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     else:
         st.error("❌ BingX 交易所公用數據讀取中，請稍候刷新...")
 
+# --- 頁籤二：全時區雙向雷達 ---
 with tab_radar:
     st.markdown("### 📡 BingX 跨週期雙向雷達 (50大熱門合約全方位掃描)")
     with st.spinner("雙向防禦引擎平行對驗中..."):
@@ -285,6 +329,7 @@ with tab_radar:
         if short_signals: st.error(f"⚠️ **空頭強烈派發（建議做空）**：\n\n" + " &nbsp;•&nbsp; ".join(short_signals))
         else: st.markdown("<div style='padding:12px; border-radius:10px; background:rgba(255,255,255,0.02); color:#94a3b8;'>🎰 市場結構穩定，暫無高威脅空頭派發資產。</div>", unsafe_allow_html=True)
 
+# --- 頁籤三：宏觀事件牆 ---
 with tab_macro:
     st.markdown("### 📰 華爾街即時財經週報與事件牆")
     components.html("""
