@@ -36,11 +36,41 @@ CRYPTO_LIST = [
 ]
 TOP_10_LIST = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "DOTUSDT", "AVAXUSDT", "LINKUSDT"]
 
-# ⚡ 核心修正：全功能對接幣安永續合約 API (fapi)，繞過美國雲端 IP 封鎖限制
+# ⚡ ⚡ 核心升級：全球多端點自動容錯流機制
+def fetch_from_endpoints(api_path):
+    # 輪詢幣安現貨、合約全球頂級鏡像域名，防止單一地區歐美IP封鎖
+    endpoints = [
+        "https://fapi.binance.com",
+        "https://api.binance.com",
+        "https://fapi.binance.me",
+        "https://api1.binance.com",
+        "https://api2.binance.com"
+    ]
+    for base_url in endpoints:
+        try:
+            # 依據端點類型自動切換對應接口路徑
+            if "fapi" in base_url and "api/" in api_path:
+                adjusted_path = api_path.replace("api/v3", "fapi/v1")
+            elif "fapi" not in base_url and "fapi/" in api_path:
+                adjusted_path = api_path.replace("fapi/v1", "api/v3")
+            else:
+                adjusted_path = api_path
+                
+            url = f"{base_url}{adjusted_path}"
+            res = requests.get(url, timeout=3.5)
+            if res.status_code == 200:
+                data = res.json()
+                if data and (isinstance(data, list) and len(data) > 0 or isinstance(data, dict)):
+                    return data
+        except:
+            continue
+    return None
+
 def get_crypto_data(symbol, interval):
+    res = fetch_from_endpoints(f"/fapi/v1/klines?symbol={symbol}&interval={interval}&limit=150")
+    if res is None:
+        return None
     try:
-        url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={interval}&limit=150"
-        res = requests.get(url, timeout=5).json()
         df = pd.DataFrame(res, columns=['Open_time', 'Open', 'High', 'Low', 'Close', 'Volume', 'C_time', 'Q_vol', 'Trades', 'T_base', 'T_quote', 'Ignore'])
         df['Open_time'] = pd.to_datetime(df['Open_time'], unit='ms') + pd.Timedelta(hours=8)
         for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
@@ -50,9 +80,11 @@ def get_crypto_data(symbol, interval):
         return None
 
 def get_all_tickers():
+    res = fetch_from_endpoints("/fapi/v1/ticker/24hr")
+    if res is None:
+        return {}
     try:
-        res = requests.get("https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=4).json()
-        return {item['symbol']: item for item in res if item['symbol'] in TOP_10_LIST}
+        return {item['symbol']: item for item in res if 'symbol' in item and item['symbol'] in TOP_10_LIST}
     except:
         return {}
 
@@ -60,26 +92,21 @@ def get_all_tickers():
 def calculate_indicators(df):
     if df is None or len(df) < 30:
         return df
-    # 1. EMA20
     df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
-    # 2. 布林通道
     ma20 = df['Close'].rolling(window=20).mean()
     std20 = df['Close'].rolling(window=20).std()
     df['BBU'] = ma20 + (2 * std20)
     df['BBL'] = ma20 - (2 * std20)
-    # 3. RSI (14)
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / (loss + 1e-10)
     df['RSI'] = 100 - (100 / (1 + rs))
-    # 4. MACD (12, 26, 9)
     exp12 = df['Close'].ewm(span=12, adjust=False).mean()
     exp26 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp12 - exp26
     df['MACDs'] = df['MACD'].ewm(span=9, adjust=False).mean()
     df['MACDh'] = df['MACD'] - df['MACDs']
-    # 5. ATR (14)
     high_low = df['High'] - df['Low']
     high_cp = (df['High'] - df['Close'].shift()).abs()
     low_cp = (df['Low'] - df['Close'].shift()).abs()
@@ -141,7 +168,7 @@ def scan_full_market_bi_directional():
             results.append(f.result())
     return results
 
-# 控制面板 (側邊欄)
+# 控制面板
 st.sidebar.markdown("<h2 style='font-size:1.4rem; margin-top:0px; margin-bottom:20px;'>📊 量化控制中心</h2>", unsafe_allow_html=True)
 symbol = st.sidebar.selectbox("分析核心標的", CRYPTO_LIST)
 interval = st.sidebar.selectbox("時間顆粒度", ["15m", "1h", "4h", "1d"])
@@ -151,10 +178,12 @@ all_tickers = get_all_tickers()
 long_score, short_score, atr_value = compute_bi_directional_score(df)
 
 try:
-    if symbol in all_tickers: current_price = float(all_tickers[symbol]['lastPrice'])
+    if all_tickers and symbol in all_tickers: 
+        current_price = float(all_tickers[symbol]['lastPrice'])
+    elif df is not None:
+        current_price = float(df['Close'].iloc[-1])
     else:
-        price_res = requests.get(f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}", timeout=2).json()
-        current_price = float(price_res['price'])
+        current_price = 0.0
 except:
     current_price = 0.0
 
@@ -172,15 +201,15 @@ if current_price > 0 and atr_value > 0:
     total_inv = pos_size * current_price
     st.sidebar.info(f"💡 **波動率風控核心** (ATR: {atr_value:.4f}):\n- 做多動態止損：${long_atr_sl:,.4f}\n- 做空動態止損：${short_atr_sl:,.4f}\n- 建議下單數量：{pos_size:.4f} 顆\n- 下單名義總值：${total_inv:.2f} USD")
 
-# 上方即時合約熱力走馬燈
+# 上方即時走馬燈
 st.title("⚡ Crypto Quant Terminal Pro")
 if all_tickers:
     ticker_items_html = ""
     for coin in TOP_10_LIST:
         data = all_tickers.get(coin, {})
         if data:
-            c_price = float(data['lastPrice'])
-            c_change = float(data['priceChangePercent'])
+            c_price = float(data.get('lastPrice', 0))
+            c_change = float(data.get('priceChangePercent', 0))
             coin_name = coin.replace("USDT", "")
             bg_color = "rgba(0, 255, 204, 0.03)" if c_change >= 0 else "rgba(255, 74, 90, 0.03)"
             border_color = "rgba(0, 255, 204, 0.12)" if c_change >= 0 else "rgba(255, 74, 90, 0.12)"
@@ -223,7 +252,7 @@ with tab_main:
         fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(20, 26, 38, 0.4)", height=600, margin=dict(l=10, r=10, t=10, b=10), xaxis_rangeslider_visible=False, hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     else:
-        st.error("❌ 交易所數據或K線資料不足")
+        st.error("❌ 交易所數據或K線資料不足。系統正在嘗試全球備援域名對接，請稍候刷新...")
 
 with tab_radar:
     st.markdown("### 📡 智能跨週期雙向雷達 (多頭共振 / 空頭派發全方位掃描)")
@@ -231,11 +260,15 @@ with tab_radar:
         bi_market_data = scan_full_market_bi_directional()
     long_signals = []
     short_signals = []
-    for coin_symbol, tfs_data in bi_market_data:
-        coin_name = coin_symbol.replace("USDT", "")
-        for tf, scores in tfs_data.items():
-            if scores["long"] >= 75: long_signals.append(f"**{coin_name}** `({tf}:{scores['long']}分)`")
-            if scores["short"] >= 75: short_signals.append(f"**{coin_name}** `({tf}:{scores['short']}分)`")
+    if bi_market_data:
+        for item in bi_market_data:
+            if item and len(item) == 2:
+                coin_symbol, tfs_data = item
+                coin_name = coin_symbol.replace("USDT", "")
+                for tf, scores in tfs_data.items():
+                    if scores["long"] >= 75: long_signals.append(f"**{coin_name}** `({tf}:{scores['long']}分)`")
+                    if scores["short"] >= 75: short_signals.append(f"**{coin_name}** `({tf}:{scores['short']}分)`")
+                    
     radar_c1, radar_c2 = st.columns(2)
     with radar_c1:
         if long_signals: st.success(f"🎯 **多頭強力共振（建議做多）**：\n\n" + " &nbsp;•&nbsp; ".join(long_signals))
