@@ -36,9 +36,10 @@ CRYPTO_LIST = [
 ]
 TOP_10_LIST = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "DOTUSDT", "AVAXUSDT", "LINKUSDT"]
 
+# ⚡ 核心修正：全功能對接幣安永續合約 API (fapi)，繞過美國雲端 IP 封鎖限制
 def get_crypto_data(symbol, interval):
     try:
-        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=150"
+        url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={interval}&limit=150"
         res = requests.get(url, timeout=5).json()
         df = pd.DataFrame(res, columns=['Open_time', 'Open', 'High', 'Low', 'Close', 'Volume', 'C_time', 'Q_vol', 'Trades', 'T_base', 'T_quote', 'Ignore'])
         df['Open_time'] = pd.to_datetime(df['Open_time'], unit='ms') + pd.Timedelta(hours=8)
@@ -48,7 +49,14 @@ def get_crypto_data(symbol, interval):
     except:
         return None
 
-# ⚡ 純 Pandas 矩陣演算法：告別外部量化庫依賴
+def get_all_tickers():
+    try:
+        res = requests.get("https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=4).json()
+        return {item['symbol']: item for item in res if item['symbol'] in TOP_10_LIST}
+    except:
+        return {}
+
+# 純 Pandas 矩陣技術指標演算法
 def calculate_indicators(df):
     if df is None or len(df) < 30:
         return df
@@ -133,14 +141,7 @@ def scan_full_market_bi_directional():
             results.append(f.result())
     return results
 
-def get_all_tickers():
-    try:
-        res = requests.get("https://api.binance.com/api/v3/ticker/24hr", timeout=4).json()
-        return {item['symbol']: item for item in res if item['symbol'] in TOP_10_LIST}
-    except:
-        return {}
-
-# 控制面板
+# 控制面板 (側邊欄)
 st.sidebar.markdown("<h2 style='font-size:1.4rem; margin-top:0px; margin-bottom:20px;'>📊 量化控制中心</h2>", unsafe_allow_html=True)
 symbol = st.sidebar.selectbox("分析核心標的", CRYPTO_LIST)
 interval = st.sidebar.selectbox("時間顆粒度", ["15m", "1h", "4h", "1d"])
@@ -152,7 +153,7 @@ long_score, short_score, atr_value = compute_bi_directional_score(df)
 try:
     if symbol in all_tickers: current_price = float(all_tickers[symbol]['lastPrice'])
     else:
-        price_res = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}", timeout=2).json()
+        price_res = requests.get(f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}", timeout=2).json()
         current_price = float(price_res['price'])
 except:
     current_price = 0.0
@@ -171,7 +172,7 @@ if current_price > 0 and atr_value > 0:
     total_inv = pos_size * current_price
     st.sidebar.info(f"💡 **波動率風控核心** (ATR: {atr_value:.4f}):\n- 做多動態止損：${long_atr_sl:,.4f}\n- 做空動態止損：${short_atr_sl:,.4f}\n- 建議下單數量：{pos_size:.4f} 顆\n- 下單名義總值：${total_inv:.2f} USD")
 
-# 上方即時熱力走馬燈
+# 上方即時合約熱力走馬燈
 st.title("⚡ Crypto Quant Terminal Pro")
 if all_tickers:
     ticker_items_html = ""
